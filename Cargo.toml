@@ -1,5 +1,5 @@
 [package]
-name = "discord-sigma-paenus-bot"
+name = "жопа"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -7,12 +7,11 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-shuttle-runtime = "0.15.0"
 anyhow = "1.0.71"
-serenity = { version = "0.11.5", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
-shuttle-secrets = "0.15.0"
-shuttle-serenity = "0.15.0"
-tokio = "1.28.0"
 tracing = "0.1.37"
-reqwest = { version = "0.11.17", features = ["json"] }
-serde = "1.0.163"
+tracing-subscriber = "0.3.17"
+tracing-futures = "0.2.5"
+tokio = { version= "1.28.0", features= ["macros", "rt-multi-thread", "signal"] }
+serenity = { version = "0.11.5", features = ["client", "voice", "rustls_backend", "standard_framework"] }
+songbird = { version = "0.3.2", features = ["builtin-queue"] }
+dotenv = "0.15.0"
