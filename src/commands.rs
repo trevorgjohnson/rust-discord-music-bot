@@ -2,9 +2,12 @@ use std::time::Duration;
 
 use serenity::{
     framework::standard::{Args, CommandResult},
-    model::prelude::Message,
+    model::prelude::{EmojiId, Message},
     prelude::Context,
+    utils::MessageBuilder,
 };
+
+use rand::prelude::*;
 
 use crate::utils::{check_msg, format_duration};
 
@@ -85,14 +88,35 @@ pub async fn play(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
 
         handler.enqueue_source(source);
 
-        check_msg(
-            msg.channel_id
-                .say(
-                    &ctx.http,
-                    format!("Playing **{}** _({})_", song_title, song_duration_str),
-                )
-                .await,
-        );
+        let emoji = match guild.emoji(&ctx.http, EmojiId(1130908498985758842)).await {
+            Ok(emoji) => emoji,
+            Err(_) => {
+                check_msg(
+                    msg.channel_id
+                        .say(&ctx.http, "bruh idk what emoji that is")
+                        .await,
+                );
+                return Ok(());
+            }
+        };
+
+        let response = MessageBuilder::new()
+            .push("Playing ")
+            .push_bold(song_title)
+            .push(" (")
+            .push_mono(song_duration_str)
+            .push(")")
+            .push_line("")
+            .emoji(&emoji)
+            .emoji(&emoji)
+            .emoji(&emoji)
+            .emoji(&emoji)
+            .emoji(&emoji)
+            .emoji(&emoji)
+            .emoji(&emoji)
+            .build();
+
+        check_msg(msg.channel_id.say(&ctx.http, &response).await);
     } else {
         check_msg(
             msg.channel_id
@@ -122,8 +146,8 @@ pub async fn queue(ctx: &Context, msg: &Message) -> CommandResult {
             .enumerate()
             .map(|(idx, track_handle)| {
                 format!(
-                    "**{}: {}** _({})_\n",
-                    idx,
+                    "{}: **{}** (`{}`)\n",
+                    idx + 1,
                     track_handle
                         .metadata()
                         .title
@@ -141,6 +165,42 @@ pub async fn queue(ctx: &Context, msg: &Message) -> CommandResult {
             .join("");
 
         check_msg(msg.channel_id.say(&ctx.http, queue_str).await);
+    } else {
+        check_msg(
+            msg.channel_id
+                .say(&ctx.http, "Queue is currently empty")
+                .await,
+        );
+    }
+
+    Ok(())
+}
+
+pub async fn shuffle(ctx: &Context, msg: &Message) -> CommandResult {
+    let guild_id = msg.guild(&ctx.cache).unwrap().id;
+
+    let manager = songbird::get(ctx)
+        .await
+        .expect("Songbird Voice client placed in at initialisation.")
+        .clone();
+
+    if let Some(handler_lock) = manager.get(guild_id) {
+        let handler = handler_lock.lock().await;
+
+        handler.queue().modify_queue(|queue| {
+            if !queue.is_empty() {
+                let mut rng = rand::thread_rng();
+                let first_song = queue.pop_front().unwrap();
+                queue.make_contiguous().shuffle(&mut rng);
+                queue.push_front(first_song);
+            }
+        });
+
+        check_msg(
+            msg.channel_id
+                .say(&ctx.http, "The queue has been shuffled")
+                .await,
+        );
     } else {
         check_msg(
             msg.channel_id

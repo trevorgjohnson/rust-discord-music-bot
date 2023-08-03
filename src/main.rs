@@ -28,7 +28,7 @@ impl EventHandler for Handler {
 }
 
 #[group]
-#[commands(join, play, queue, skip, leave)]
+#[commands(join, play, queue, shuffle, skip, leave)]
 struct General;
 
 #[command]
@@ -47,6 +47,12 @@ async fn play(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
 #[only_in(guilds)]
 async fn queue(ctx: &Context, msg: &Message) -> CommandResult {
     crate::commands::queue(ctx, msg).await
+}
+
+#[command]
+#[only_in(guilds)]
+async fn shuffle(ctx: &Context, msg: &Message) -> CommandResult {
+    crate::commands::shuffle(ctx, msg).await
 }
 
 #[command]
