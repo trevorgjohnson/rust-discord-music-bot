@@ -11,9 +11,9 @@ pub fn check_msg(result: SerenityResult<Message>) {
 
 fn show_double_digits(num: u64) -> String {
     if num < 10 {
-        return format!("0{}", num);
+        format!("0{}", num)
     } else {
-        return num.to_string();
+        num.to_string()
     }
 }
 

@@ -1,19 +1,14 @@
 mod commands;
 mod utils;
 
+use crate::commands::GENERAL_GROUP;
 use dotenv::dotenv;
 
 use serenity::{
     async_trait,
     client::{Client, Context, EventHandler},
-    framework::{
-        standard::{
-            macros::{command, group},
-            Args, CommandResult,
-        },
-        StandardFramework,
-    },
-    model::{channel::Message, gateway::Ready},
+    framework::StandardFramework,
+    model::gateway::Ready,
     prelude::GatewayIntents,
 };
 use songbird::SerenityInit;
@@ -25,46 +20,6 @@ impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name)
     }
-}
-
-#[group]
-#[commands(join, play, queue, shuffle, skip, leave)]
-struct General;
-
-#[command]
-#[only_in(guilds)]
-async fn join(ctx: &Context, msg: &Message) -> CommandResult {
-    crate::commands::join(ctx, msg).await
-}
-
-#[command]
-#[only_in(guilds)]
-async fn play(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-    crate::commands::play(ctx, msg, args).await
-}
-
-#[command]
-#[only_in(guilds)]
-async fn queue(ctx: &Context, msg: &Message) -> CommandResult {
-    crate::commands::queue(ctx, msg).await
-}
-
-#[command]
-#[only_in(guilds)]
-async fn shuffle(ctx: &Context, msg: &Message) -> CommandResult {
-    crate::commands::shuffle(ctx, msg).await
-}
-
-#[command]
-#[only_in(guilds)]
-async fn skip(ctx: &Context, msg: &Message) -> CommandResult {
-    crate::commands::skip(ctx, msg).await
-}
-
-#[command]
-#[only_in(guilds)]
-async fn leave(ctx: &Context, msg: &Message) -> CommandResult {
-    crate::commands::leave(ctx, msg).await
 }
 
 #[tokio::main]
