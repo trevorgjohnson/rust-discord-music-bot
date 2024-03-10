@@ -1,95 +1,133 @@
-use std::time::Duration;
+use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use serenity::{
-    framework::standard::{Args, CommandResult},
-    model::prelude::{EmojiId, Message},
-    prelude::Context,
+    all::{CacheHttp, ChannelId, Http},
+    async_trait,
     utils::MessageBuilder,
 };
+use songbird::{
+    input::{Compose, YoutubeDl},
+    Event, EventContext,
+};
 
-use crate::utils::{check_msg, format_duration};
+use crate::{
+    handler::MessageContext,
+    utils::{check_msg, format_duration},
+    HttpKey,
+};
 
-pub async fn play(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-    let search = args.raw().collect::<Vec<&str>>().join(" ");
+use super::{Command, TrackMetadata};
 
-    if search.starts_with("http") {
-        check_msg(msg.channel_id.say(&ctx.http, "Cannot be a url").await);
-        return Ok(());
-    }
+pub struct Play;
 
-    let guild = msg.guild(&ctx.cache).unwrap();
-    let guild_id = guild.id;
-
-    let manager = songbird::get(ctx)
-        .await
-        .expect("Songbird Voice client placed in at initialisation.")
-        .clone();
-
-    if manager.get(guild_id).is_none() {
-        super::join::join(ctx, msg).await?
-    }
-
-    if let Some(handler_lock) = manager.get(guild_id) {
-        let mut handler = handler_lock.lock().await;
-
-        let source = match songbird::input::ytdl_search(&search).await {
-            Ok(source) => source,
-            Err(err) => {
-                println!("Error starting source: {:?}", err);
-
-                check_msg(msg.channel_id.say(&ctx.http, "Error sourcing url").await);
-
-                return Ok(());
-            }
-        };
-
-        let song_metadata = source.metadata.clone();
-        let song_title = song_metadata
-            .title
-            .clone()
-            .unwrap_or("idk lmfao".to_owned());
-        let song_duration = song_metadata.duration.unwrap_or(Duration::from_secs(0));
-
-        let song_duration_str = format_duration(song_duration);
-
-        handler.enqueue_source(source);
-
-        let emoji = match guild.emoji(&ctx.http, EmojiId(1130908498985758842)).await {
-            Ok(emoji) => emoji,
-            Err(_) => {
+impl Command for Play {
+    async fn call(ctx: MessageContext) -> Result<()> {
+        let url = match ctx.msg.content.split_once(' ') {
+            Some((_, args)) => args.to_owned(),
+            None => {
                 check_msg(
-                    msg.channel_id
-                        .say(&ctx.http, "bruh idk what emoji that is")
+                    ctx.msg
+                        .channel_id
+                        .say(&ctx.ctx.http, "Must provide a URL to a video or audio")
                         .await,
                 );
                 return Ok(());
             }
         };
 
-        let response = MessageBuilder::new()
-            .push("Playing ")
-            .push_bold(song_title)
-            .push(" (")
-            .push_mono(song_duration_str)
-            .push(")")
-            .push_line("")
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .build();
+        let do_search = !url.starts_with("http");
 
-        check_msg(msg.channel_id.say(&ctx.http, &response).await);
-    } else {
-        check_msg(
-            msg.channel_id
-                .say(&ctx.http, "Not in a voice channel to play in")
-                .await,
-        );
+        let guild_id = ctx.msg.guild_id.unwrap();
+
+        let http_client = {
+            let data = ctx.ctx.data.read().await;
+            data.get::<HttpKey>()
+                .cloned()
+                .expect("Guaranteed to exist in the typemap.")
+        };
+
+        let manager = songbird::get(&ctx.ctx)
+            .await
+            .expect("Songbird Voice client placed in at initialisation.")
+            .clone();
+
+        if manager.get(guild_id).is_none() {
+            super::Join::call(ctx.clone()).await?
+        }
+
+        if let Some(handler_lock) = manager.get(guild_id) {
+            let mut handler = handler_lock.lock().await;
+
+            let mut src = if do_search {
+                YoutubeDl::new_search(http_client, url)
+            } else {
+                YoutubeDl::new(http_client, url)
+            };
+
+            let song_metadata = src.aux_metadata().await?;
+
+            let song_title = song_metadata.clone().title.context("No title found")?;
+            let song_duration = format_duration(
+                song_metadata
+                    .clone()
+                    .duration
+                    .context("No duration found")?,
+            );
+
+            let track_handle = handler.enqueue(src.into()).await;
+
+            let _ = track_handle.add_event(
+                Event::Track(songbird::TrackEvent::End),
+                SongEndNotifier {
+                    chan_id: ctx.msg.channel_id,
+                    http: ctx.ctx.http.clone(),
+                },
+            );
+
+            {
+                let mut typemap = track_handle.typemap().write().await;
+                typemap.insert::<TrackMetadata>(song_metadata.clone());
+            }
+
+            let response = MessageBuilder::new()
+                .push("Added ")
+                .push_bold(song_title)
+                .push(" (")
+                .push_mono(song_duration)
+                .push(") at position ")
+                .push_mono(format!("#{}", handler.queue().len()))
+                .build();
+
+            check_msg(ctx.msg.channel_id.say(&ctx.ctx.http, &response).await);
+        } else {
+            check_msg(
+                ctx.msg
+                    .channel_id
+                    .say(&ctx.ctx.http, "Not in a voice channel to play in")
+                    .await,
+            );
+        }
+
+        Ok(())
     }
 
-    Ok(())
+    fn description() -> String {
+        String::from("**-play**: makes me play whatever garbage you tell me to _(as long as its on youtube. i aint playin no soundcloud slop)_")
+    }
+}
+struct SongEndNotifier {
+    chan_id: ChannelId,
+    http: Arc<Http>,
+}
+
+#[async_trait]
+impl songbird::EventHandler for SongEndNotifier {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        dbg!(&self.http, self.chan_id);
+        if let EventContext::Track(track_list) = ctx {
+            dbg!(track_list);
+        }
+        None
+    }
 }

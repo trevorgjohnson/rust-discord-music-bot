@@ -1,45 +1,56 @@
-use crate::utils::check_msg;
-use serenity::{framework::standard::CommandResult, model::prelude::Message, prelude::Context};
+use crate::{handler::MessageContext, utils::check_msg};
 
-pub async fn skip(ctx: &Context, msg: &Message) -> CommandResult {
-    let guild_id = msg.guild(&ctx.cache).unwrap().id;
+use anyhow::{Context, Result};
+use serenity::all::MessageBuilder;
 
-    let manager = songbird::get(ctx)
-        .await
-        .expect("Songbird Voice client placed in at initialisation.")
-        .clone();
+use super::{Command, TrackMetadata};
 
-    if let Some(handler_lock) = manager.get(guild_id) {
-        let handler = handler_lock.lock().await;
+pub struct Skip;
 
-        let mut skipped_song_title = String::from("");
-        if let Some(current_metadata) = handler.queue().current() {
-            skipped_song_title = current_metadata
-                .metadata()
-                .title
-                .clone()
-                .unwrap_or("".to_owned());
+impl Command for Skip {
+    async fn call(ctx: MessageContext) -> Result<()> {
+        let guild_id = ctx.msg.guild(&ctx.ctx.cache).unwrap().id;
+
+        let manager = songbird::get(&ctx.ctx)
+            .await
+            .expect("Songbird Voice client placed in at initialisation.")
+            .clone();
+
+        if let Some(handler_lock) = manager.get(guild_id) {
+            let handler = handler_lock.lock().await;
+
+            let queue = handler.queue();
+
+            let curr_track = queue.current().context("No song is playing to skip")?;
+            let curr_track = curr_track.typemap().read().await;
+            let skipped_track_metadata = curr_track
+                .get::<TrackMetadata>()
+                .context("No metadata found")?;
+
+            queue.skip()?;
+
+            let response = format!(
+                "Skipped **{}**\n",
+                skipped_track_metadata
+                    .title
+                    .clone()
+                    .unwrap_or("song".to_owned())
+            );
+
+            check_msg(ctx.msg.channel_id.say(&ctx.ctx.http, response).await);
+        } else {
+            check_msg(
+                ctx.msg
+                    .channel_id
+                    .say(&ctx.ctx.http, "Queue is currently empty")
+                    .await,
+            );
         }
 
-        match handler.queue().skip() {
-            Ok(_) => check_msg(
-                msg.channel_id
-                    .say(&ctx.http, format!("Skipped **{}**", skipped_song_title))
-                    .await,
-            ),
-            Err(_) => check_msg(
-                msg.channel_id
-                    .say(&ctx.http, "There are no songs to skip")
-                    .await,
-            ),
-        };
-    } else {
-        check_msg(
-            msg.channel_id
-                .say(&ctx.http, "Queue is currently empty")
-                .await,
-        );
+        Ok(())
     }
 
-    Ok(())
+    fn description() -> String {
+        String::from("**-skip**: skips the current song that im playing")
+    }
 }
