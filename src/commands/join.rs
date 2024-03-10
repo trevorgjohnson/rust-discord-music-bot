@@ -1,33 +1,65 @@
-use crate::utils::check_msg;
+use crate::{handler::MessageContext, utils::check_msg};
+use anyhow::Result;
+use serenity::async_trait;
+use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
-use serenity::{framework::standard::CommandResult, model::prelude::Message, prelude::Context};
+use super::Command;
 
-pub async fn join(ctx: &Context, msg: &Message) -> CommandResult {
-    let guild = msg.guild(&ctx.cache).unwrap();
-    let guild_id = guild.id;
+pub struct Join;
 
-    let channel_id = guild
-        .voice_states
-        .get(&msg.author.id)
-        .and_then(|voice_state| voice_state.channel_id);
+impl Command for Join {
+    async fn call(ctx: MessageContext) -> Result<()> {
+        let (guild_id, channel_id) = {
+            let guild = ctx.msg.guild(&ctx.ctx.cache).unwrap();
+            let channel_id = guild
+                .voice_states
+                .get(&ctx.msg.author.id)
+                .and_then(|voice_state| voice_state.channel_id);
 
-    let connect_to = match channel_id {
-        Some(channel) => channel,
-        None => {
-            check_msg(msg.reply(ctx, "Not in a voice channel").await);
+            (guild.id, channel_id)
+        };
 
-            return Ok(());
+        let connect_to = match channel_id {
+            Some(channel) => channel,
+            None => {
+                check_msg(ctx.msg.reply(&ctx.ctx, "Not in a voice channel").await);
+                return Ok(());
+            }
+        };
+
+        let manager = songbird::get(&ctx.ctx)
+            .await
+            .expect("Songbird Voice client placed in at initialisation.")
+            .clone();
+
+        if let Ok(handler_lock) = manager.join(guild_id, connect_to).await {
+            let mut handler = handler_lock.lock().await;
+            handler.add_global_event(TrackEvent::Error.into(), TrackErrorNotifier);
         }
-    };
 
-    let manager = songbird::get(ctx)
-        .await
-        .expect("Songbird Voice client placed in at initialisation.")
-        .clone();
+        Ok(())
+    }
 
-    let _handler = manager.join(guild_id, connect_to).await;
+    fn description() -> String {
+        String::from("**-join**: makes me join the current voice channel _(i report everything i hear to the fbi)_")
+    }
+}
 
-    check_msg(msg.reply(ctx, "Joining").await);
+struct TrackErrorNotifier;
 
-    Ok(())
+#[async_trait]
+impl VoiceEventHandler for TrackErrorNotifier {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        if let EventContext::Track(track_list) = ctx {
+            for (state, handle) in *track_list {
+                println!(
+                    "Track {:?} encountered an error: {:?}",
+                    handle.uuid(),
+                    state.playing
+                );
+            }
+        }
+
+        None
+    }
 }
