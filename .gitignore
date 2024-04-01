@@ -1,3 +1,10 @@
+# Lavalink binary and log folder
+/logs
+Lavalink.jar
+
+# Cargo '.gitignore' defaults 
 /target
 Secrets.toml
+
+# '.env' file for storing secret variables
 *.env

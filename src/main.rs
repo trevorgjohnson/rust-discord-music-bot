@@ -1,56 +1,93 @@
+#[macro_use]
+extern crate tracing;
+
 mod commands;
-mod utils;
+mod music_events;
 
-use crate::commands::GENERAL_GROUP;
-use dotenv::dotenv;
+use lavalink_rs::{model::events, prelude::*};
 
-use serenity::{
-    async_trait,
-    client::{Client, Context, EventHandler},
-    framework::StandardFramework,
-    model::gateway::Ready,
-    prelude::GatewayIntents,
-};
+use poise::serenity_prelude::{self as serenity, Context as SerenityContext};
 use songbird::SerenityInit;
 
-struct Handler;
-
-#[async_trait]
-impl EventHandler for Handler {
-    async fn ready(&self, _: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name)
-    }
+pub struct Data {
+    pub lavalink: LavalinkClient,
 }
 
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Context<'a> = poise::Context<'a, Data, Error>;
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Error> {
+    // Source '.env' file
+    dotenv::dotenv()?;
+
+    std::env::set_var("RUST_LOG", "info,lavalink_rs=trace");
     tracing_subscriber::fmt::init();
 
-    // load all secrets in '.env' into the environment
-    dotenv().ok();
-    let token = std::env::var("TOKEN").expect("'TOKEN' was not found");
+    let framework = poise::Framework::builder()
+        .options(poise::FrameworkOptions {
+            commands: vec![
+                commands::clear::clear(),
+                commands::join::join(),
+                commands::leave::leave(),
+                commands::pause::pause(),
+                commands::play::play(),
+                commands::queue::queue(),
+                commands::resume::resume(),
+                commands::skip::skip(),
+                commands::stop::stop(),
+            ],
+            prefix_options: poise::PrefixFrameworkOptions {
+                prefix: Some("-".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .setup(|ctx, _, framework| {
+            Box::pin(async move {
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
-    let framework = StandardFramework::new()
-        .configure(|c| c.prefix("-"))
-        .group(&GENERAL_GROUP);
+                let client = new_lavalink_client(ctx).await;
+                Ok(Data { lavalink: client })
+            })
+        })
+        .build();
 
-    // Set gateway intents, which decides what events the bot will be notified about
-    let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
+    let mut client = serenity::ClientBuilder::new(
+        std::env::var("TOKEN").expect("Unable to get 'TOKEN' env var"),
+        serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT,
+    )
+    .register_songbird()
+    .framework(framework)
+    .await?;
 
-    let mut client = Client::builder(&token, intents)
-        .event_handler(Handler)
-        .framework(framework)
-        .register_songbird()
-        .await
-        .expect("Err creating client");
+    client.start().await?;
 
-    tokio::spawn(async move {
-        let _ = client
-            .start()
-            .await
-            .map_err(|err| println!("Client ended: {:?}", err));
-    });
+    Ok(())
+}
 
-    let _ = tokio::signal::ctrl_c().await;
-    println!("Received Ctrl-C, shutting down.");
+async fn new_lavalink_client(ctx: &SerenityContext) -> LavalinkClient {
+    let events = events::Events {
+        raw: Some(music_events::raw_event),
+        ready: Some(music_events::ready_event),
+        track_start: Some(music_events::track_start),
+        ..Default::default()
+    };
+
+    let node_local = NodeBuilder {
+        hostname: "localhost:2333".to_string(),
+        is_ssl: false,
+        events: events::Events::default(),
+        password: std::env::var("LAVALINK_PASSWORD")
+            .expect("Unable to get 'LAVALINK_PASSWORD' env var"),
+        user_id: ctx.cache.current_user().id.into(),
+        session_id: None,
+    };
+
+    LavalinkClient::new(
+        events,
+        vec![node_local],
+        NodeDistributionStrategy::round_robin(),
+    )
+    .await
 }

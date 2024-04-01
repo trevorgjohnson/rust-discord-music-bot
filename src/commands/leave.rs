@@ -1,29 +1,20 @@
-use crate::utils::check_msg;
-use serenity::{framework::standard::CommandResult, model::prelude::Message, prelude::Context};
+use crate::{Context, Error};
 
-pub async fn leave(ctx: &Context, msg: &Message) -> CommandResult {
-    let guild = msg.guild(&ctx.cache).unwrap();
-    let guild_id = guild.id;
+/// Leave the current voice channel.
+#[poise::command(slash_command, prefix_command)]
+pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap();
 
-    let manager = songbird::get(ctx)
-        .await
-        .expect("Songbird Voice client placed in at initialisation.")
-        .clone();
-    let has_handler = manager.get(guild_id).is_some();
+    let manager = songbird::get(ctx.serenity_context()).await.unwrap().clone();
+    let lava_client = ctx.data().lavalink.clone();
 
-    if has_handler {
-        if let Err(e) = manager.remove(guild_id).await {
-            check_msg(
-                msg.channel_id
-                    .say(&ctx.http, format!("Failed: {:?}", e))
-                    .await,
-            );
-        }
+    lava_client.delete_player(guild_id).await?;
 
-        check_msg(msg.channel_id.say(&ctx.http, "Left voice channel").await);
-    } else {
-        check_msg(msg.reply(ctx, "Not in a voice channel").await);
+    if manager.get(guild_id).is_some() {
+        manager.remove(guild_id).await?;
     }
+
+    ctx.say("Left voice channel.").await?;
 
     Ok(())
 }

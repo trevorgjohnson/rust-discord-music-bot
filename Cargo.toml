@@ -1,18 +1,32 @@
 [package]
-name = "жопа"
+name = "poise_example"
 version = "0.1.0"
 edition = "2021"
-publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.71"
-tracing = "0.1.37"
-tracing-subscriber = "0.3.17"
-tracing-futures = "0.2.5"
-tokio = { version= "1.28.0", features= ["macros", "rt-multi-thread", "signal"] }
-serenity = { version = "0.11.5", features = ["client", "voice", "rustls_backend", "standard_framework", "model"] }
-songbird = { version = "0.3.2", features = ["builtin-queue"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+serde_json = "1"
+futures = "0.3"
 dotenv = "0.15.0"
-rand = "0.8.5"
+
+[dependencies.poise]
+version = "0.6"
+default-features = false
+features = ["cache", "chrono", "handle_panics"]
+
+[dependencies.songbird]
+version = "0.4"
+default-features = false
+features = ["gateway", "serenity", "native"]
+
+[dependencies.tokio]
+version = "1"
+features = ["rt-multi-thread", "macros"]
+
+[dependencies.lavalink-rs]
+default-features = false
+git = "https://gitlab.com/vicky5124/lavalink-rs"
+features = ["songbird", "serenity", "native-tls", "macros"]

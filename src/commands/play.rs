@@ -1,94 +1,92 @@
-use std::time::Duration;
-
-use serenity::{
-    framework::standard::{Args, CommandResult},
-    model::prelude::{EmojiId, Message},
-    prelude::Context,
-    utils::MessageBuilder,
+use lavalink_rs::{
+    model::{search::SearchEngines, track::TrackLoadData},
+    player_context::TrackInQueue,
 };
 
-use crate::utils::{check_msg, format_duration};
+use crate::{commands::join::_join, Context, Error};
 
-pub async fn play(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-    let search = args.raw().collect::<Vec<&str>>().join(" ");
+/// Play a song in the voice channel you are connected in.
+#[poise::command(slash_command, prefix_command)]
+pub async fn play(
+    ctx: Context<'_>,
+    #[description = "Search term or URL"]
+    #[rest]
+    term: Option<String>,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap();
+    let has_joined = _join(&ctx, guild_id, None).await?;
 
-    if search.starts_with("http") {
-        check_msg(msg.channel_id.say(&ctx.http, "Cannot be a url").await);
+    let lava_client = ctx.data().lavalink.clone();
+
+    let Some(player) = lava_client.get_player_context(guild_id) else {
+        ctx.say("Join the bot to a voice channel first.").await?;
         return Ok(());
-    }
+    };
 
-    let guild = msg.guild(&ctx.cache).unwrap();
-    let guild_id = guild.id;
+    let Some(query) = term else {
+        if let Ok(player_data) = player.get_player().await {
+            let queue = player.get_queue();
 
-    let manager = songbird::get(ctx)
-        .await
-        .expect("Songbird Voice client placed in at initialisation.")
-        .clone();
-
-    if manager.get(guild_id).is_none() {
-        super::join::join(ctx, msg).await?
-    }
-
-    if let Some(handler_lock) = manager.get(guild_id) {
-        let mut handler = handler_lock.lock().await;
-
-        let source = match songbird::input::ytdl_search(&search).await {
-            Ok(source) => source,
-            Err(err) => {
-                println!("Error starting source: {:?}", err);
-
-                check_msg(msg.channel_id.say(&ctx.http, "Error sourcing url").await);
-
-                return Ok(());
+            if player_data.track.is_none() && queue.get_track(0).await.is_ok_and(|x| x.is_some()) {
+                player.skip()?;
+            } else {
+                ctx.say("The queue is empty.").await?;
             }
-        };
+        }
 
-        let song_metadata = source.metadata.clone();
-        let song_title = song_metadata
-            .title
-            .clone()
-            .unwrap_or("idk lmfao".to_owned());
-        let song_duration = song_metadata.duration.unwrap_or(Duration::from_secs(0));
+        return Ok(());
+    };
 
-        let song_duration_str = format_duration(song_duration);
-
-        handler.enqueue_source(source);
-
-        let emoji = match guild.emoji(&ctx.http, EmojiId(1130908498985758842)).await {
-            Ok(emoji) => emoji,
-            Err(_) => {
-                check_msg(
-                    msg.channel_id
-                        .say(&ctx.http, "bruh idk what emoji that is")
-                        .await,
-                );
-                return Ok(());
-            }
-        };
-
-        let response = MessageBuilder::new()
-            .push("Playing ")
-            .push_bold(song_title)
-            .push(" (")
-            .push_mono(song_duration_str)
-            .push(")")
-            .push_line("")
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .emoji(&emoji)
-            .build();
-
-        check_msg(msg.channel_id.say(&ctx.http, &response).await);
+    let query = if query.starts_with("http") {
+        query
     } else {
-        check_msg(
-            msg.channel_id
-                .say(&ctx.http, "Not in a voice channel to play in")
-                .await,
-        );
+        SearchEngines::YouTube.to_query(&query)?
+    };
+
+    let loaded_tracks = lava_client.load_tracks(guild_id, &query).await?;
+
+    let mut playlist_info = None;
+    let tracks: Vec<TrackInQueue> = match loaded_tracks.data {
+        Some(TrackLoadData::Track(x)) => vec![x.into()],
+        Some(TrackLoadData::Search(x)) => vec![x[0].clone().into()],
+        Some(TrackLoadData::Playlist(x)) => {
+            playlist_info = Some(x.info);
+            x.tracks.iter().map(|x| x.clone().into()).collect()
+        }
+
+        _ => {
+            ctx.say(format!("{:?}", loaded_tracks)).await?;
+            return Ok(());
+        }
+    };
+
+    let track_add_msg = match playlist_info {
+        Some(info) => format!("Added playlist to queue: {}", info.name),
+        None => {
+            let track = &tracks[0].track;
+            match &track.info.uri {
+                Some(uri) => format!(
+                    "Added to queue: [{} - {}](<{}>)",
+                    track.info.author, track.info.title, uri
+                ),
+                None => format!(
+                    "Added to queue: {} - {}",
+                    track.info.author, track.info.title
+                ),
+            }
+        }
+    };
+    ctx.say(track_add_msg).await?;
+
+    let queue = player.get_queue();
+    queue.append(tracks.into())?;
+
+    if !has_joined {
+        if let Ok(player_data) = player.get_player().await {
+            if player_data.track.is_none() && queue.get_track(0).await.is_ok_and(|x| x.is_some()) {
+                player.skip()?;
+            }
+        }
     }
 
     Ok(())
