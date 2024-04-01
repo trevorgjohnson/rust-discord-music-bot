@@ -1,72 +1,71 @@
-use crate::{
-    commands::TrackMetadata,
-    handler::MessageContext,
-    utils::{check_msg, format_duration},
-};
-use std::time::Duration;
+use crate::{Context, Error};
+use futures::future;
+use futures::stream::StreamExt;
 
-use anyhow::{Context, Result};
-use serenity::futures;
-use songbird::tracks::TrackHandle;
-use tokio::{self, task::JoinError};
+/// Add a song to the queue
+#[poise::command(slash_command, prefix_command)]
+pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap();
 
-use super::Command;
+    let lava_client = ctx.data().lavalink.clone();
 
-pub struct Queue;
+    let Some(player) = lava_client.get_player_context(guild_id) else {
+        ctx.say("Join the bot to a voice channel first.").await?;
+        return Ok(());
+    };
 
-impl Command for Queue {
-    async fn call(ctx: MessageContext) -> Result<()> {
-        let guild_id = ctx.msg.guild(&ctx.ctx.cache).unwrap().id;
+    let queue = player.get_queue();
+    let player_data = player.get_player().await?;
 
-        let manager = songbird::get(&ctx.ctx)
-            .await
-            .expect("Songbird Voice client placed in at initialisation.")
-            .clone();
+    let max = queue.get_count().await?.min(9);
 
-        let handler_lock = manager.get(guild_id).context("no handler lock")?;
-        let handler = handler_lock.lock().await;
+    let queue_message = queue
+        .enumerate()
+        .take_while(|(idx, _)| future::ready(*idx < max))
+        .map(|(idx, x)| {
+            if let Some(uri) = &x.track.info.uri {
+                format!(
+                    "{} -> [{} - {}](<{}>)",
+                    idx + 1,
+                    x.track.info.author,
+                    x.track.info.title,
+                    uri
+                )
+            } else {
+                format!(
+                    "{} -> {} - {}",
+                    idx + 1,
+                    x.track.info.author,
+                    x.track.info.title
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .await
+        .join("\n");
 
-        let queue = handler.queue().current_queue();
+    let now_playing_message = if let Some(track) = player_data.track {
+        let time_s = player_data.state.position / 1000 % 60;
+        let time_m = player_data.state.position / 1000 / 60;
+        let time = format!("{:02}:{:02}", time_m, time_s);
 
-        if queue.is_empty() {
-            check_msg(
-                ctx.msg
-                    .channel_id
-                    .say(&ctx.ctx.http, "Queue is currently empty")
-                    .await,
-            );
-            return Ok(());
+        if let Some(uri) = &track.info.uri {
+            format!(
+                "Now playing: [{} - {}](<{}>) | {}",
+                track.info.author, track.info.title, uri, time
+            )
+        } else {
+            format!(
+                "Now playing: {} - {} | {}",
+                track.info.author, track.info.title, time
+            )
         }
+    } else {
+        "Now playing: nothing".to_string()
+    };
 
-        let queue_futures = queue.into_iter().enumerate().map(|(idx, track_handle)| {
-            tokio::task::spawn(async move { get_queue_track_info(idx, track_handle).await })
-        });
+    ctx.say(format!("{}\n\n{}", now_playing_message, queue_message))
+        .await?;
 
-        let queue_str = futures::future::join_all(queue_futures)
-            .await
-            .into_iter()
-            .collect::<Result<Vec<String>, JoinError>>()?
-            .join("");
-
-        check_msg(ctx.msg.channel_id.say(&ctx.ctx.http, queue_str).await);
-
-        Ok(())
-    }
-
-    fn description() -> String {
-        String::from("**-queue**: returns all of the current songs in the queue")
-    }
-}
-
-async fn get_queue_track_info(idx: usize, track_handle: TrackHandle) -> String {
-    let track = track_handle.typemap().read().await;
-    match track.get::<TrackMetadata>() {
-        Some(metadata) => format!(
-            "{}: **{}** (`{}`)\n",
-            idx + 1,
-            metadata.title.clone().unwrap_or("idk lmfao".to_owned()),
-            format_duration(metadata.duration.unwrap_or(Duration::from_secs(0)))
-        ),
-        None => format!("{}: `Uhh idk tf this song is lmfao`\n", idx + 1),
-    }
+    Ok(())
 }

@@ -1,0 +1,22 @@
+server: 
+  port: 2333
+  address: 127.0.0.1
+
+lavalink:
+  server:
+    password: "youshallnotpass"
+    sources:
+      youtube: true
+      soundcloud: true
+    opusEncodingQuality: 1
+    resamplingQuality: LOW
+    youtubeSearchEnabled: true
+    soundcloudSearchEnabled: true
+
+logging:
+  file:
+    path: ./logs/
+
+  level:
+    root: INFO
+    lavalink: INFO

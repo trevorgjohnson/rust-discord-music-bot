@@ -1,65 +1,72 @@
-use crate::{handler::MessageContext, utils::check_msg};
-use anyhow::Result;
-use serenity::async_trait;
-use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
+use std::sync::Arc;
 
-use super::Command;
+use poise::serenity_prelude::{self as serenity};
 
-pub struct Join;
+use crate::{Context, Error};
 
-impl Command for Join {
-    async fn call(ctx: MessageContext) -> Result<()> {
-        let (guild_id, channel_id) = {
-            let guild = ctx.msg.guild(&ctx.ctx.cache).unwrap();
-            let channel_id = guild
-                .voice_states
-                .get(&ctx.msg.author.id)
-                .and_then(|voice_state| voice_state.channel_id);
+pub async fn _join(
+    ctx: &Context<'_>,
+    guild_id: serenity::GuildId,
+    channel_id: Option<serenity::ChannelId>,
+) -> Result<bool, Error> {
+    let lava_client = ctx.data().lavalink.clone();
 
-            (guild.id, channel_id)
-        };
+    let manager = songbird::get(ctx.serenity_context()).await.unwrap().clone();
 
-        let connect_to = match channel_id {
-            Some(channel) => channel,
-            None => {
-                check_msg(ctx.msg.reply(&ctx.ctx, "Not in a voice channel").await);
-                return Ok(());
-            }
-        };
-
-        let manager = songbird::get(&ctx.ctx)
-            .await
-            .expect("Songbird Voice client placed in at initialisation.")
-            .clone();
-
-        if let Ok(handler_lock) = manager.join(guild_id, connect_to).await {
-            let mut handler = handler_lock.lock().await;
-            handler.add_global_event(TrackEvent::Error.into(), TrackErrorNotifier);
-        }
-
-        Ok(())
+    if lava_client.get_player_context(guild_id).is_some() {
+        return Ok(false);
     }
 
-    fn description() -> String {
-        String::from("**-join**: makes me join the current voice channel _(i report everything i hear to the fbi)_")
+    let connect_to = match channel_id {
+        Some(id) => id,
+        None => {
+            let user_channel_id = ctx
+                .guild()
+                .unwrap()
+                .voice_states
+                .get(&ctx.author().id)
+                .and_then(|voice_state| voice_state.channel_id);
+
+            match user_channel_id {
+                Some(id) => id,
+                None => return Err("Not in a voice channel".into()),
+            }
+        }
+    };
+
+    let handler = manager.join_gateway(guild_id, connect_to).await;
+
+    match handler {
+        Ok((connection_info, _)) => {
+            lava_client
+                .create_player_context_with_data(
+                    guild_id,
+                    connection_info,
+                    Arc::new((ctx.channel_id(), ctx.serenity_context().http.clone())),
+                )
+                .await?;
+
+            Ok(true)
+        }
+        Err(why) => {
+            ctx.say(format!("Error joining the channel: {}", why))
+                .await?;
+            Err(why.into())
+        }
     }
 }
 
-struct TrackErrorNotifier;
+/// Join the specified voice channel or the one you are currently in.
+#[poise::command(slash_command, prefix_command)]
+pub async fn join(
+    ctx: Context<'_>,
+    #[description = "The channel ID to join to."]
+    #[channel_types("Voice")]
+    channel_id: Option<serenity::ChannelId>,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap();
 
-#[async_trait]
-impl VoiceEventHandler for TrackErrorNotifier {
-    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
-        if let EventContext::Track(track_list) = ctx {
-            for (state, handle) in *track_list {
-                println!(
-                    "Track {:?} encountered an error: {:?}",
-                    handle.uuid(),
-                    state.playing
-                );
-            }
-        }
+    _join(&ctx, guild_id, channel_id).await?;
 
-        None
-    }
+    Ok(())
 }

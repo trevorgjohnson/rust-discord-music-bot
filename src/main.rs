@@ -1,47 +1,93 @@
+#[macro_use]
+extern crate tracing;
+
 mod commands;
-mod handler;
-mod utils;
+mod music_events;
 
-use dotenv::dotenv;
-use handler::Handler;
+use lavalink_rs::{model::events, prelude::*};
 
-use reqwest::Client as HttpClient;
-use serenity::{client::Client, prelude::GatewayIntents};
-use songbird::{typemap::TypeMapKey, SerenityInit};
+use poise::serenity_prelude::{self as serenity, Context as SerenityContext};
+use songbird::SerenityInit;
 
-struct HttpKey;
-
-impl TypeMapKey for HttpKey {
-    type Value = HttpClient;
+pub struct Data {
+    pub lavalink: LavalinkClient,
 }
 
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Context<'a> = poise::Context<'a, Data, Error>;
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Error> {
+    // Source '.env' file
+    dotenv::dotenv()?;
+
+    std::env::set_var("RUST_LOG", "info,lavalink_rs=trace");
     tracing_subscriber::fmt::init();
 
-    // load all secrets in '.env' into the environment
-    dotenv().ok();
-    let token = std::env::var("TOKEN").expect("'TOKEN' was not found");
+    let framework = poise::Framework::builder()
+        .options(poise::FrameworkOptions {
+            commands: vec![
+                commands::clear::clear(),
+                commands::join::join(),
+                commands::leave::leave(),
+                commands::pause::pause(),
+                commands::play::play(),
+                commands::queue::queue(),
+                commands::resume::resume(),
+                commands::skip::skip(),
+                commands::stop::stop(),
+            ],
+            prefix_options: poise::PrefixFrameworkOptions {
+                prefix: Some("-".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .setup(|ctx, _, framework| {
+            Box::pin(async move {
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
-    // Set gateway intents, which decides what events the bot will be notified about
-    let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
+                let client = new_lavalink_client(ctx).await;
+                Ok(Data { lavalink: client })
+            })
+        })
+        .build();
 
-    let http_client = HttpClient::new();
+    let mut client = serenity::ClientBuilder::new(
+        std::env::var("TOKEN").expect("Unable to get 'TOKEN' env var"),
+        serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT,
+    )
+    .register_songbird()
+    .framework(framework)
+    .await?;
 
-    let mut client = Client::builder(&token, intents)
-        .event_handler(Handler)
-        .type_map_insert::<HttpKey>(http_client)
-        .register_songbird()
-        .await
-        .expect("Err creating client");
+    client.start().await?;
 
-    tokio::spawn(async move {
-        let _ = client
-            .start()
-            .await
-            .map_err(|err| println!("Client ended: {:?}", err));
-    });
+    Ok(())
+}
 
-    let _ = tokio::signal::ctrl_c().await;
-    println!("Received Ctrl-C, shutting down.");
+async fn new_lavalink_client(ctx: &SerenityContext) -> LavalinkClient {
+    let events = events::Events {
+        raw: Some(music_events::raw_event),
+        ready: Some(music_events::ready_event),
+        track_start: Some(music_events::track_start),
+        ..Default::default()
+    };
+
+    let node_local = NodeBuilder {
+        hostname: "localhost:2333".to_string(),
+        is_ssl: false,
+        events: events::Events::default(),
+        password: std::env::var("LAVALINK_PASSWORD")
+            .expect("Unable to get 'LAVALINK_PASSWORD' env var"),
+        user_id: ctx.cache.current_user().id.into(),
+        session_id: None,
+    };
+
+    LavalinkClient::new(
+        events,
+        vec![node_local],
+        NodeDistributionStrategy::round_robin(),
+    )
+    .await
 }
