@@ -1152,21 +1152,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "poise_example"
-version = "0.1.0"
-dependencies = [
- "dotenv",
- "futures",
- "lavalink-rs",
- "poise",
- "serde_json",
- "songbird",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "poise_macros"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1343,6 +1328,21 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "winreg",
+]
+
+[[package]]
+name = "rust-discord-music-bot"
+version = "0.1.0"
+dependencies = [
+ "dotenv",
+ "futures",
+ "lavalink-rs",
+ "poise",
+ "serde_json",
+ "songbird",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
