@@ -6,12 +6,16 @@ lavalink:
   server:
     password: "youshallnotpass"
     sources:
-      youtube: true
+      youtube: false # disable default to use `youtube-plugin`
       soundcloud: true
     opusEncodingQuality: 1
     resamplingQuality: LOW
     youtubeSearchEnabled: true
     soundcloudSearchEnabled: true
+
+  plugins:
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.2.0"
+      snapshot: false # Set to true if you want to use a snapshot version.
 
 logging:
   file:
